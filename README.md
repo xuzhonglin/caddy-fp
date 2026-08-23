@@ -1,81 +1,24 @@
 # caddy-fp
 
-带 [forwardproxy](https://github.com/caddyserver/forwardproxy) 插件的 Caddy 正向代理镜像，CI 内从源码原生编译，支持 `linux/amd64` 与 `linux/arm64` 双架构。
+一个自带 forward_proxy 插件的 Caddy 镜像，amd64 和 arm64 都有。
+
+官方 Caddy 不带正向代理功能，想加插件就得自己编译。这个仓库让 GitHub Actions 代劳：每次构建都从源码编译，先跑一遍功能测试，通过了才发布到 Docker Hub 和 GHCR。
 
 ```
 docker pull colinxu/caddy-fp:latest
-# 或 GitHub Container Registry（国内网络通常更顺畅）
 docker pull ghcr.io/xuzhonglin/caddy-fp:latest
 ```
 
-- Caddy 版本：**v2.11.4**（见 `Dockerfile` 的 `CADDY_VERSION` 参数）
-- 认证：HTTP Basic（`basic_auth myuser myStrongPass`）
-- 支持：明文 HTTP 代理（绝对 URL）+ HTTPS CONNECT 隧道 + 可选 tinyproxy 级联
-- 非 root 用户运行；`hide_ip` / `hide_via` 隐藏代理痕迹
+## 它能做什么
 
-## 目录结构
+- HTTP 正向代理：明文请求走绝对 URL，HTTPS 走 CONNECT 隧道（隧道是端到端加密的，代理本身看不到内容）
+- 账号密码认证，`hide_ip` / `hide_via` 不给上游留痕迹
+- 可以级联 tinyproxy 之类的上游代理
+- 非 root 运行，镜像只有 60MB 左右
 
-```
-caddy-fp/
-├── Dockerfile               # 多阶段构建：builder 内 xcaddy 编译 + alpine 运行时
-├── Caddyfile                # 生产配置示例（443 + 自动 HTTPS）
-├── test-Caddyfile           # CI 冒烟测试用（8888 明文入口）
-├── verify.sh                # 本地一键功能验证脚本
-└── .github/workflows/docker.yml  # CI：冒烟测试 → 双架构构建 → 推送 DH + GHCR
-```
-
-## 构建原理
-
-1. **builder 阶段**：基于官方 `caddy:2.11.4-builder`（内置 Go + xcaddy），通过 `GOARCH=$TARGETARCH`
-   让 Go 原生交叉编译出目标架构二进制——**全程无需 QEMU 模拟**，速度快且稳定；
-2. **运行时阶段**：alpine 底座安装证书/时区数据，拷入静态编译的 Caddy 二进制。
-   （arm64 下这一步的 `apk` 由 QEMU 模拟执行，仅几秒钟）
-
-## CI 自动构建（GitHub Actions）
-
-推送 `v*` tag 或在 Actions 页面手动触发。需要配置仓库 Secrets：
-
-| Secret | 说明 |
-|---|---|
-| `DOCKERHUB_USERNAME` | Docker Hub 用户名 |
-| `DOCKERHUB_TOKEN` | Docker Hub → Account Settings → Security → New Access Token（Read/Write） |
-
-GHCR 使用 GitHub 内置 `GITHUB_TOKEN`，零配置。产物：
-
-```
-colinxu/caddy-fp:latest / :2.11.4
-ghcr.io/xuzhonglin/caddy-fp:latest / :2.11.4
-```
-
-流程：amd64 镜像冒烟测试（407 拦截 + 隧道连通性）→ 通过后 QEMU + buildx 构建双架构并双推送。
-
-## 升级 Caddy 版本
-
-```bash
-# 1. 改 Dockerfile 第一行 ARG CADDY_VERSION=x.y.z
-# 2. 改 .github/workflows/docker.yml 中 tags 的版本号
-# 3. git commit 后打 v* tag 推送触发 CI
-```
-
-## 本地验证
-
-```bash
-bash verify.sh    # 需要 podman 或 docker；自动跑 407/错误密码/明文代理/HTTPS 隧道四项检查
-```
-
-本地构建镜像（amd64，国内网络建议加 ALPINE_IMAGE 参数）：
-
-```bash
-docker build -t caddy-fp:test \
-  --build-arg ALPINE_IMAGE=docker.m.daocloud.io/library/alpine:3.20 .
-```
-
-注意：本机开着其他代理软件时先关掉或 unset 环境代理变量，脚本会自行处理。
-
-## 服务端部署
+## 部署
 
 ```yaml
-# docker-compose.yml
 services:
   caddy:
     image: colinxu/caddy-fp:latest
@@ -93,28 +36,97 @@ volumes:
   caddy_config:
 ```
 
-编辑 `Caddyfile`：改域名和 `basic_auth` 的账号密码，然后 `docker compose up -d`。
-Caddy 自动申请续期 Let's Encrypt 证书；如需级联 tinyproxy，取消 `upstream tinyproxy:8888` 注释。
+把仓库里的 `Caddyfile` 拷过去，改掉域名和密码，`docker compose up -d` 完事。证书 Caddy 自己搞定。
 
-## 客户端使用
+客户端这样用：
 
 ```bash
 curl -x https://myuser:myStrongPass@your-domain.com https://httpbin.org/ip
-# 返回服务器 IP 即链路正常（浏览器选 secure web proxy / HTTPS 代理类型）
 ```
 
-## forward_proxy 配置速查（该插件的真实语法）
+返回的 IP 是服务器而不是你本机，就说明通了。浏览器里选 HTTPS 代理（secure web proxy）类型。
+
+配置长这样：
 
 ```caddyfile
-forward_proxy {
-	basic_auth <user> <明文密码>   # 行内两参数，非块、不用 bcrypt
-	hide_ip                        # 不向上游暴露客户端 IP
-	hide_via                       # 去掉 Via 头
-	upstream <host:port>           # 可选：级联上游代理（如 tinyproxy）
-	acl { allow <ip/cidr> }        # 可选：访问控制
+your-domain.com {
+	forward_proxy {
+		basic_auth myuser myStrongPass   # 行内两参数，密码明文即可
+		hide_ip
+		hide_via
+		# upstream tinyproxy:8888        # 需要级联时打开
+	}
+	respond "Hello" 200
 }
 ```
 
-## 安全提醒
+再说一遍，`basic_auth` 别删。公网上的扫描器几小时就能摸到一个无认证代理，到时候它就是别人的免费跳板了。
 
-公网部署**必须配置 `basic_auth`**，否则就是开放代理，几小时内必被扫描滥用。建议同时用 `acl` 限制来源 IP。
+## 版本自动跟进
+
+仓库里有个 `.caddy-version` 文件，是版本的唯一来源。`watch-caddy-release` 这个 workflow 每天早上跑一次，去查 Caddy 官方仓库的最新 release，发现新版本就自动改版本号、提交代码、触发构建，构建结果它也会盯着，失败会标红提醒你。
+
+也就是说 Caddy 出了新版，你什么都不用做，最多半天后新镜像就躺在你仓库里了。
+
+想手动升级也一样：改 `.caddy-version` 和 `Dockerfile` 里的 `CADDY_VERSION`，推上去，然后到 Actions 页面手动触发 `build-and-push`。
+
+## 本地验证
+
+装好 podman 或 docker 之后：
+
+```bash
+bash verify.sh ghcr.io/xuzhonglin/caddy-fp:2.11.4
+```
+
+脚本会起一个测试容器，检查插件是否在、无凭据和错误密码是否被 407 拦住、带凭据的明文代理和 HTTPS 隧道是否正常。四项全过才算数。
+
+本地构建（国内网络建议换个 alpine 源）：
+
+```bash
+docker build -t caddy-fp:test \
+  --build-arg ALPINE_IMAGE=docker.m.daocloud.io/library/alpine:3.20 .
+```
+
+## CI 配置
+
+仓库 Secrets 需要两项：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（在 Docker Hub 的 Security 页面生成，给 Read/Write 权限）。GHCR 用的是 GitHub 自带的 token，不用管。
+
+两个 workflow：
+
+- `build-and-push`：冒烟测试 → 双架构构建 → 推送两个 registry 的 `latest` 和版本号标签
+- `watch-caddy-release`：每天检查上游新版本，自动跟进
+
+---
+
+## English
+
+A Caddy image with the forward_proxy plugin built in, for amd64 and arm64.
+
+Stock Caddy has no forward proxy support, and adding a plugin means compiling it yourself. This repo offloads that to GitHub Actions: every build compiles from source, runs a functional smoke test, and only publishes to Docker Hub and GHCR if it passes.
+
+```bash
+docker pull colinxu/caddy-fp:latest
+docker pull ghcr.io/xuzhonglin/caddy-fp:latest
+```
+
+**Deploy**: copy `Caddyfile` from this repo, change the domain and password, then `docker compose up -d` with the compose file above. Certificates are handled automatically.
+
+**Use it**:
+
+```bash
+curl -x https://myuser:myStrongPass@your-domain.com https://httpbin.org/ip
+```
+
+If the returned IP is your server's, you're done. In browsers, pick the HTTPS (secure web proxy) type.
+
+Do not remove `basic_auth`. An unauthenticated proxy on the public internet gets found and abused within hours.
+
+**Version tracking**: `.caddy-version` is the single source of truth. The `watch-caddy-release` workflow checks the upstream Caddy release every day, and when a new version appears it bumps the file, commits, triggers a build, and watches the result. No manual work needed.
+
+**Local test**:
+
+```bash
+bash verify.sh ghcr.io/xuzhonglin/caddy-fp:2.11.4
+```
+
+**CI secrets**: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Read/Write). GHCR uses the built-in `GITHUB_TOKEN`, nothing to configure.

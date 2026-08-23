@@ -1,0 +1,69 @@
+name: watch-caddy-release
+
+on:
+  schedule:
+    - cron: "30 21 * * *"   # UTC 21:30，北京时间每天早上 5:30
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  check-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compare with latest Caddy release
+        id: ver
+        run: |
+          LATEST=$(curl -sf https://api.github.com/repos/caddyserver/caddy/releases/latest | jq -r '.tag_name | ltrimstr("v")')
+          CURRENT=$(cat .caddy-version)
+          echo "latest=$LATEST" >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          if [ "$LATEST" != "$CURRENT" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "new version found: $CURRENT -> $LATEST"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "already up to date ($CURRENT)"
+          fi
+
+      - name: Bump version files
+        if: steps.ver.outputs.changed == 'true'
+        run: |
+          V="${{ steps.ver.outputs.latest }}"
+          echo "$V" > .caddy-version
+          sed -i "s/^ARG CADDY_VERSION=.*/ARG CADDY_VERSION=$V/" Dockerfile
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .caddy-version Dockerfile
+          git commit -m "bump caddy to $V"
+          git push
+
+      - name: Trigger image build
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sleep 15
+          gh workflow run docker.yml --ref main
+
+      - name: Wait for build result
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          sleep 60
+          for i in $(seq 1 40); do
+            status=$(gh run list --workflow=docker.yml --branch=main --limit=1 \
+              --json status,conclusion --jq '.[0] | "\(.status):\(.conclusion)"')
+            echo "[$i] $status"
+            case "$status" in
+              completed:success) exit 0 ;;
+              completed:*)       exit 1 ;;
+            esac
+            sleep 30
+          done
+          echo "timed out waiting for build"
+          exit 1

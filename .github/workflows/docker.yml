@@ -8,14 +8,13 @@ on:
 
 permissions:
   contents: read
-  packages: write   # 推送 GHCR 必需
+  packages: write
 
 env:
   DH_IMAGE: colinxu/caddy-fp
   GHCR_IMAGE: ghcr.io/xuzhonglin/caddy-fp
 
 jobs:
-  # 先用 amd64 镜像跑冒烟测试：认证拦截 + HTTPS 隧道
   smoke-test:
     runs-on: ubuntu-latest
     steps:
@@ -29,34 +28,35 @@ jobs:
           load: true
           tags: caddy-fp:test
 
-      - name: Verify forward proxy behavior
+      - name: Smoke test
         run: |
           docker run -d --name fp-test -p 18888:8888 \
             -v "$PWD/test-Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy-fp:test
           sleep 3
           code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
-            -x http://localhost:18888 http://httpbin.org/ip || echo err)
-          echo "no-auth status => $code (expect 407)"
-          [ "$code" = "407" ] || { echo "FAIL: auth not enforced"; docker logs fp-test; exit 1; }
+            -x http://localhost:18888 http://httpbin.org/ip || true)
+          echo "no-auth => $code (expect 407)"
+          [ "$code" = "407" ] || { docker logs fp-test; exit 1; }
           ip=$(curl -s --max-time 20 \
             -x http://myuser:myStrongPass@localhost:18888 https://ipinfo.io/ip)
-          echo "tunnel exit ip => $ip"
-          [ -n "$ip" ] || { echo "FAIL: tunnel broken"; docker logs fp-test; exit 1; }
+          echo "tunnel ip => $ip"
+          [ -n "$ip" ] || { docker logs fp-test; exit 1; }
           docker rm -f fp-test >/dev/null
 
-  # 测试通过后，构建 amd64 + arm64 双架构镜像，同时推送 Docker Hub 和 GHCR
   push-multiarch:
     needs: smoke-test
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up QEMU (arm64 模拟执行 apk 安装)
-        uses: docker/setup-qemu-action@v3
+      - name: Read Caddy version
+        id: ver
+        run: echo "version=$(cat .caddy-version)" >> "$GITHUB_OUTPUT"
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -77,8 +77,10 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          build-args: |
+            CADDY_VERSION=${{ steps.ver.outputs.version }}
           tags: |
             ${{ env.DH_IMAGE }}:latest
-            ${{ env.DH_IMAGE }}:2.11.4
+            ${{ env.DH_IMAGE }}:${{ steps.ver.outputs.version }}
             ${{ env.GHCR_IMAGE }}:latest
-            ${{ env.GHCR_IMAGE }}:2.11.4
+            ${{ env.GHCR_IMAGE }}:${{ steps.ver.outputs.version }}
