@@ -1,3 +1,5 @@
+[English](README.en.md) | 中文
+
 # caddy-fp
 
 一个自带 forward_proxy 插件的 Caddy 镜像，amd64 和 arm64 都有。
@@ -95,38 +97,3 @@ docker build -t caddy-fp:test \
 
 - `build-and-push`：冒烟测试 → 双架构构建 → 推送两个 registry 的 `latest` 和版本号标签
 - `watch-caddy-release`：每天检查上游新版本，自动跟进
-
----
-
-## English
-
-A Caddy image with the forward_proxy plugin built in, for amd64 and arm64.
-
-Stock Caddy has no forward proxy support, and adding a plugin means compiling it yourself. This repo offloads that to GitHub Actions: every build compiles from source, runs a functional smoke test, and only publishes to Docker Hub and GHCR if it passes.
-
-```bash
-docker pull colinxu/caddy-fp:latest
-docker pull ghcr.io/xuzhonglin/caddy-fp:latest
-```
-
-**Deploy**: copy `Caddyfile` from this repo, change the domain and password, then `docker compose up -d` with the compose file above. Certificates are handled automatically.
-
-**Use it**:
-
-```bash
-curl -x https://myuser:myStrongPass@your-domain.com https://httpbin.org/ip
-```
-
-If the returned IP is your server's, you're done. In browsers, pick the HTTPS (secure web proxy) type.
-
-Do not remove `basic_auth`. An unauthenticated proxy on the public internet gets found and abused within hours.
-
-**Version tracking**: `.caddy-version` is the single source of truth. The `watch-caddy-release` workflow checks the upstream Caddy release every day, and when a new version appears it bumps the file, commits, triggers a build, and watches the result. No manual work needed.
-
-**Local test**:
-
-```bash
-bash verify.sh ghcr.io/xuzhonglin/caddy-fp:2.11.4
-```
-
-**CI secrets**: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (Read/Write). GHCR uses the built-in `GITHUB_TOKEN`, nothing to configure.
