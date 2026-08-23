@@ -1,9 +1,9 @@
-# syntax=docker/dockerfile:1
 # 多阶段构建：官方 builder 镜像内置 Go + xcaddy，Go 原生交叉编译出目标架构二进制，
 # 因此 builder 阶段始终以 amd64 运行，无需 QEMU；仅最终阶段的 apk 需要 arm64 模拟。
+# 注意：所有 ARG 必须声明在第一个 FROM 之前（全局作用域），否则后续 FROM 引用会解析为空。
 
-# ALPINE_IMAGE: 国内本地构建可换镜像源，如 docker.m.daocloud.io/library/alpine:3.20
 ARG CADDY_VERSION=2.11.4
+ARG ALPINE_IMAGE=alpine:3.20
 
 FROM caddy:${CADDY_VERSION}-builder AS builder
 ARG TARGETARCH
@@ -12,7 +12,6 @@ RUN GOARCH=${TARGETARCH} xcaddy build \
       --output /usr/bin/caddy \
       && /usr/bin/caddy version
 
-ARG ALPINE_IMAGE=alpine:3.20
 FROM ${ALPINE_IMAGE}
 
 RUN apk add --no-cache ca-certificates tzdata
