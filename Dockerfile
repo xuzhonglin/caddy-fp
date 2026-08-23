@@ -1,21 +1,26 @@
-# 多架构 Caddy 镜像（携带 forwardproxy 插件）
-# 二进制由本地 xcaddy 交叉编译好，放在 dist/ 目录。
-# 使用 docker buildx 构建时，TARGETARCH 会自动注入（amd64 / arm64）。
+# syntax=docker/dockerfile:1
+# 多阶段构建：官方 builder 镜像内置 Go + xcaddy，Go 原生交叉编译出目标架构二进制，
+# 因此 builder 阶段始终以 amd64 运行，无需 QEMU；仅最终阶段的 apk 需要 arm64 模拟。
 
-# ALPINE_IMAGE: 国内网络可换镜像源，如 docker.m.daocloud.io/library/alpine:3.20
+# ALPINE_IMAGE: 国内本地构建可换镜像源，如 docker.m.daocloud.io/library/alpine:3.20
+ARG CADDY_VERSION=2.11.4
+
+FROM caddy:${CADDY_VERSION}-builder AS builder
+ARG TARGETARCH
+RUN GOARCH=${TARGETARCH} xcaddy build \
+      --with github.com/caddyserver/forwardproxy \
+      --output /usr/bin/caddy \
+      && /usr/bin/caddy version
+
 ARG ALPINE_IMAGE=alpine:3.20
 FROM ${ALPINE_IMAGE}
 
-ARG TARGETARCH
-
-# ca-certificates: 代理访问 HTTPS 上游必需
-# tzdata: 可选，日志时间用本地时区
 RUN apk add --no-cache ca-certificates tzdata
 
-COPY dist/caddy-linux-${TARGETARCH} /usr/bin/caddy
+COPY --from=builder /usr/bin/caddy /usr/bin/caddy
 RUN chmod +x /usr/bin/caddy && /usr/bin/caddy version
 
-# 非 root 运行更安全；80/443 >1024 端口在容器内无所谓
+# 非 root 运行更安全
 RUN addgroup -S caddy && adduser -S caddy -G caddy
 USER caddy
 
