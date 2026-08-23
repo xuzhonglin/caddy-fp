@@ -4,6 +4,8 @@
 
 ```
 docker pull colinxu/caddy-fp:latest
+# 或 GitHub Container Registry（国内网络通常更顺畅）
+docker pull ghcr.io/xuzhonglin/caddy-fp:latest
 ```
 
 - Caddy 版本：**v2.11.4**

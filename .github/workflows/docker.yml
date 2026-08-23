@@ -6,8 +6,13 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+  packages: write   # 推送 GHCR 必需
+
 env:
-  IMAGE: colinxu/caddy-fp
+  DH_IMAGE: colinxu/caddy-fp
+  GHCR_IMAGE: ghcr.io/xuzhonglin/caddy-fp
 
 jobs:
   # 先用 amd64 镜像跑冒烟测试：认证拦截 + HTTPS 隧道
@@ -40,7 +45,7 @@ jobs:
           [ -n "$ip" ] || { echo "FAIL: tunnel broken"; docker logs fp-test; exit 1; }
           docker rm -f fp-test >/dev/null
 
-  # 测试通过后，构建 amd64 + arm64 双架构镜像并推送 Docker Hub
+  # 测试通过后，构建 amd64 + arm64 双架构镜像，同时推送 Docker Hub 和 GHCR
   push-multiarch:
     needs: smoke-test
     runs-on: ubuntu-latest
@@ -59,6 +64,13 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
@@ -66,5 +78,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           push: true
           tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:2.11.4
+            ${{ env.DH_IMAGE }}:latest
+            ${{ env.DH_IMAGE }}:2.11.4
+            ${{ env.GHCR_IMAGE }}:latest
+            ${{ env.GHCR_IMAGE }}:2.11.4
