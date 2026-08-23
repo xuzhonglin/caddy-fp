@@ -2,23 +2,23 @@
 
 # caddy-fp
 
-A Caddy image with the forward_proxy plugin built in, for amd64 and arm64.
+A Caddy image with the forward_proxy plugin built in, available for linux/amd64 and linux/arm64.
 
-Stock Caddy has no forward proxy support, and adding a plugin means compiling it yourself. This repo offloads that to GitHub Actions: every build compiles from source, runs a functional smoke test, and only publishes to Docker Hub and GHCR if it passes.
+The official Caddy distribution does not include forward proxy support, and enabling a plugin requires compiling it from source. This repository performs that build through GitHub Actions: every build runs a functional smoke test first, and images are published to Docker Hub and GHCR only after the test passes.
 
 ```
 docker pull colinxu/caddy-fp:latest
 docker pull ghcr.io/xuzhonglin/caddy-fp:latest
 ```
 
-## What it does
+## Features
 
-- HTTP forward proxy: plain requests use absolute URLs, HTTPS goes through CONNECT tunnels (end-to-end encrypted — the proxy itself can't see the content)
-- Username/password auth, with `hide_ip` / `hide_via` so nothing leaks upstream
-- Can chain through an upstream proxy like tinyproxy
-- Runs as non-root, image is around 60MB
+- HTTP forward proxy: plain requests are forwarded using absolute URLs, and HTTPS traffic is carried over CONNECT tunnels. Tunnels are end-to-end encrypted; the proxy cannot inspect the content
+- Username/password authentication. The `hide_ip` and `hide_via` options prevent client information from leaking upstream
+- Supports chaining through an upstream proxy such as tinyproxy
+- Containers run as a non-root user; the image is approximately 60MB
 
-## Deploy
+## Deployment
 
 ```yaml
 services:
@@ -38,62 +38,28 @@ volumes:
   caddy_config:
 ```
 
-Copy the `Caddyfile` from this repo, change the domain and password, then `docker compose up -d`. Certificates are handled automatically.
+Copy the `Caddyfile` from this repository into the deployment directory, update the domain and credentials, then run `docker compose up -d`. TLS certificates are issued and renewed automatically.
 
-Client side:
+Client usage:
 
 ```bash
 curl -x https://myuser:myStrongPass@your-domain.com https://httpbin.org/ip
 ```
 
-If the returned IP is your server's instead of your own, you're done. In browsers, pick the HTTPS (secure web proxy) type.
+If the returned IP is the server's egress address rather than your own, the proxy chain is working. In browsers, select HTTPS (secure web proxy) as the proxy type.
 
-The config looks like this:
+Full configuration example:
 
 ```caddyfile
 your-domain.com {
 	forward_proxy {
-		basic_auth myuser myStrongPass   # two inline args, plaintext password is fine
+		basic_auth myuser myStrongPass   # two inline arguments; plaintext password
 		hide_ip
 		hide_via
-		# upstream tinyproxy:8888        # uncomment to chain
+		# upstream tinyproxy:8888        # uncomment to chain through an upstream
 	}
 	respond "Hello" 200
 }
 ```
 
-One more time: don't remove `basic_auth`. An unauthenticated proxy on the public internet gets found and abused within hours.
-
-## Automatic version tracking
-
-`.caddy-version` in this repo is the single source of truth. The `watch-caddy-release` workflow runs every morning, checks the latest release of the upstream Caddy repo, and when a new version appears it bumps the file, commits, triggers a build, and watches the result. If the build fails, the workflow turns red and you get notified.
-
-In other words, when Caddy ships a new version you do nothing — the new image shows up within half a day.
-
-Manual upgrade works the same way: update `.caddy-version` and `CADDY_VERSION` in the Dockerfile, push, then trigger `build-and-push` from the Actions page.
-
-## Local test
-
-With podman or docker installed:
-
-```bash
-bash verify.sh ghcr.io/xuzhonglin/caddy-fp:2.11.4
-```
-
-The script starts a test container and checks that the plugin is present, that missing or wrong credentials get a 407, and that authenticated plain-HTTP proxying and HTTPS tunneling both work. All four must pass.
-
-Local build (if you're behind the GFW, swap the alpine mirror):
-
-```bash
-docker build -t caddy-fp:test \
-  --build-arg ALPINE_IMAGE=docker.m.daocloud.io/library/alpine:3.20 .
-```
-
-## CI setup
-
-Two repo secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (create under Security on Docker Hub, Read/Write). GHCR uses the built-in GitHub token, nothing to configure.
-
-Two workflows:
-
-- `build-and-push`: smoke test → dual-arch build → push `latest` and version tags to both registries
-- `watch-caddy-release`: checks for upstream releases daily and follows them automatically
+Note that `basic_auth` must be kept in place. Unauthenticated proxies on the public internet are discovered and abused by scanners within hours.
