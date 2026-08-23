@@ -11,14 +11,13 @@ PROXY_ADDR="localhost:$HOST_PORT"   # 用 localhost 而非 127.0.0.1（podman �
 unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 
 echo "===== 1/6 确认 forward_proxy 插件 ====="
-if "$([ -x /usr/bin/podman ] && echo podman || echo docker)" run --rm "$IMAGE" list-modules | grep -q forward_proxy; then
+RUN=docker
+command -v podman >/dev/null 2>&1 && RUN=podman
+if $RUN run --rm "$IMAGE" list-modules | grep -q forward_proxy; then
   echo "OK: http.handlers.forward_proxy 已加载"
 else
   echo "FAIL: 未找到 forward_proxy 插件"; exit 1
 fi
-
-RUN="podman"
-command -v podman >/dev/null || RUN=docker
 
 echo
 echo "===== 2/6 启动测试容器 (宿主 $HOST_PORT -> 容器 8888) ====="
@@ -33,12 +32,12 @@ check() { [ "$2" = "$3" ] && { echo "PASS: $1"; pass=$((pass+1)); } || { echo "F
 
 echo
 echo "===== 3/6 无认证访问（期望 407）====="
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -x "http://$PROXY_ADDR" http://httpbin.org/ip || echo err)
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -x "http://$PROXY_ADDR" http://httpbin.org/ip) || true
 check "认证强制开启" "$code" "407"
 
 echo
 echo "===== 4/6 错误密码（期望 407）====="
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -x "http://$PROXY_ADDR" -U myuser:wrongpass http://httpbin.org/ip || echo err)
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -x "http://$PROXY_ADDR" -U myuser:wrongpass http://httpbin.org/ip) || true
 check "密码校验生效" "$code" "407"
 
 echo
