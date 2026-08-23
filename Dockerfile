@@ -5,7 +5,9 @@
 ARG CADDY_VERSION=2.11.4
 ARG ALPINE_IMAGE=alpine:3.20
 
-FROM caddy:${CADDY_VERSION}-builder AS builder
+# --platform=$BUILDPLATFORM 强制 builder 用构建机原生架构（amd64）运行，
+# 配合 GOARCH 交叉编译，避免 arm64 目标时整个 Go 编译在 QEMU 模拟里慢 5~10 倍
+FROM --platform=$BUILDPLATFORM caddy:${CADDY_VERSION}-builder AS builder
 ARG TARGETARCH
 RUN GOARCH=${TARGETARCH} xcaddy build \
       --with github.com/caddyserver/forwardproxy \
