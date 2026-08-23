@@ -1,0 +1,70 @@
+name: build-and-push
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+env:
+  IMAGE: colinxu/caddy-fp
+
+jobs:
+  # 先用 amd64 镜像跑冒烟测试：认证拦截 + HTTPS 隧道
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image (amd64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: caddy-fp:test
+
+      - name: Verify forward proxy behavior
+        run: |
+          docker run -d --name fp-test -p 18888:8888 \
+            -v "$PWD/test-Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy-fp:test
+          sleep 3
+          code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
+            -x http://localhost:18888 http://httpbin.org/ip || echo err)
+          echo "no-auth status => $code (expect 407)"
+          [ "$code" = "407" ] || { echo "FAIL: auth not enforced"; docker logs fp-test; exit 1; }
+          ip=$(curl -s --max-time 20 \
+            -x http://myuser:myStrongPass@localhost:18888 https://ipinfo.io/ip)
+          echo "tunnel exit ip => $ip"
+          [ -n "$ip" ] || { echo "FAIL: tunnel broken"; docker logs fp-test; exit 1; }
+          docker rm -f fp-test >/dev/null
+
+  # 测试通过后，构建 amd64 + arm64 双架构镜像并推送 Docker Hub
+  push-multiarch:
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 模拟执行 apk 安装)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:2.11.4

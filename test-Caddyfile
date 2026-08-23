@@ -1,0 +1,15 @@
+{
+	admin off
+	auto_https off
+}
+
+# 测试用：HTTP 明文入口，只监听 8888
+# 正式部署请使用 Caddyfile（443 + 域名自动 HTTPS）
+# 注意：basic_auth 为行内两参数（用户名 明文密码），插件内部自行 base64 编码
+:8888 {
+	forward_proxy {
+		basic_auth myuser myStrongPass
+		hide_ip
+		hide_via
+	}
+}

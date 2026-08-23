@@ -1,0 +1,23 @@
+# 正向代理配置（forwardproxy 插件）
+# 对外只暴露 443（TLS 加密入口），客户端用 https:// 代理方式连接：
+#   curl -x https://user:pass@your-domain.com https://httpbin.org/ip
+# 注意：插件子指令为 basic_auth（明文密码，插件内部自行编码）、hide_via
+
+your-domain.com {
+	forward_proxy {
+		# 必改！公网开放代理不加认证会被扫描滥用
+		basic_auth {
+			myuser myStrongPass
+		}
+
+		# 直连出网；如需级联 tinyproxy，取消下行注释并改地址
+		# upstream tinyproxy:8888
+
+		# 隐藏客户端真实 IP 与 Via 头
+		hide_ip
+		hide_via
+	}
+
+	# 可选：同域名顺便挂个站点，伪装性更好
+	respond "Hello" 200
+}
