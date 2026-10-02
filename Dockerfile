@@ -1,5 +1,5 @@
 # builder 阶段固定跑在构建机原生架构上，Go 交叉编译出目标架构二进制
-ARG CADDY_VERSION=2.11.4
+ARG CADDY_VERSION=2.11.6
 ARG ALPINE_IMAGE=alpine:3.20
 
 FROM --platform=$BUILDPLATFORM caddy:${CADDY_VERSION}-builder AS builder
